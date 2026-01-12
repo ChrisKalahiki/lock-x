@@ -1,0 +1,13 @@
+{
+  "name": "lock-x",
+  "version": "1.0.0",
+  "description": "Block x.com when Claude Code is idle",
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "DEBUG=1 bun run server.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0"
+  }
+}
