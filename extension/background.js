@@ -1,8 +1,11 @@
 const STATUS_URL = "http://localhost:51736/status";
+const CONFIG_URL = "http://localhost:51736/config";
 const CHECK_INTERVAL_MINUTES = 0.05; // ~3 seconds
+const CONFIG_CHECK_INTERVAL_MINUTES = 5; // Check config every 5 min
 
 let lastStatus = null;
 let blockingEnabled = false;
+let blockedSites = ["x.com", "twitter.com"]; // Default fallback
 
 // Badge colors
 const BADGE_COLORS = {
@@ -11,46 +14,65 @@ const BADGE_COLORS = {
   error: "#6b7280", // Gray - server down
 };
 
-// Dynamic rules to block X/Twitter
-const BLOCK_RULES = [
-  {
+// Generate block rules from site list
+function generateBlockRules(sites) {
+  const domains = [];
+  sites.forEach(site => {
+    domains.push(site, `www.${site}`, `mobile.${site}`, `m.${site}`);
+  });
+
+  return [{
     id: 1,
     priority: 1,
     action: { type: "block" },
     condition: {
-      requestDomains: ["x.com", "www.x.com", "mobile.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"],
+      requestDomains: domains,
       resourceTypes: ["main_frame"],
     },
-  },
-];
+  }];
+}
 
 async function updateBadge(status, text) {
   await chrome.action.setBadgeBackgroundColor({ color: BADGE_COLORS[status] });
   await chrome.action.setBadgeText({ text });
 
   const titles = {
-    working: "Lock X: Working - X allowed",
-    idle: "Lock X: Idle - X blocked",
-    error: "Lock X: Server offline - X allowed",
+    working: "Lock X: Working - sites allowed",
+    idle: "Lock X: Idle - sites blocked",
+    error: "Lock X: Server offline - sites allowed",
   };
   await chrome.action.setTitle({ title: titles[status] });
 }
 
 async function setBlockingEnabled(enabled) {
   try {
-    // Always remove existing rules first, then add if needed
+    const rules = enabled ? generateBlockRules(blockedSites) : [];
     await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: [1, 2, 3, 4, 5, 6], // Clear any stale rules
-      addRules: enabled ? BLOCK_RULES : [],
+      removeRuleIds: [1, 2, 3, 4, 5, 6],
+      addRules: rules,
     });
     console.log(`Lock X: Blocking ${enabled ? "enabled" : "disabled"}`);
-
-    // Debug: log active rules
-    const rules = await chrome.declarativeNetRequest.getDynamicRules();
-    console.log("Lock X: Active rules:", JSON.stringify(rules));
     blockingEnabled = enabled;
   } catch (e) {
     console.error("Lock X: Failed to update rules:", e);
+  }
+}
+
+async function fetchConfig() {
+  try {
+    const response = await fetch(CONFIG_URL);
+    const config = await response.json();
+    if (config.blockedSites && Array.isArray(config.blockedSites)) {
+      blockedSites = config.blockedSites;
+      console.log("Lock X: Config loaded, blocking:", blockedSites);
+
+      // If currently blocking, update rules with new config
+      if (blockingEnabled) {
+        await setBlockingEnabled(true);
+      }
+    }
+  } catch (e) {
+    console.log("Lock X: Could not fetch config, using defaults");
   }
 }
 
@@ -74,7 +96,7 @@ async function checkStatus() {
       }
     }
   } catch (e) {
-    // Server unreachable = Claude Code not running = allow X
+    // Server unreachable = Claude Code not running = allow
     if (lastStatus !== "error") {
       console.log("Lock X: Server unreachable, disabling blocking");
       lastStatus = "error";
@@ -86,10 +108,13 @@ async function checkStatus() {
 
 // Set up periodic checking using alarms
 chrome.alarms.create("checkStatus", { periodInMinutes: CHECK_INTERVAL_MINUTES });
+chrome.alarms.create("checkConfig", { periodInMinutes: CONFIG_CHECK_INTERVAL_MINUTES });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "checkStatus") {
     checkStatus();
+  } else if (alarm.name === "checkConfig") {
+    fetchConfig();
   }
 });
 
@@ -97,13 +122,25 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "checkBlock") {
     sendResponse({ shouldBlock: lastStatus === "idle" });
+  } else if (message.type === "checkSite") {
+    const hostname = message.hostname.replace(/^(www\.|m\.|mobile\.)/, "");
+    const isBlocked = blockedSites.some(site => hostname === site || hostname.endsWith("." + site));
+    sendResponse({ isBlocked });
   }
   return true;
 });
 
-// Initial check on service worker startup
+// Initial checks on service worker startup
 checkStatus();
+fetchConfig();
 
 // Also check when the service worker wakes up
-chrome.runtime.onStartup.addListener(checkStatus);
-chrome.runtime.onInstalled.addListener(checkStatus);
+chrome.runtime.onStartup.addListener(() => {
+  checkStatus();
+  fetchConfig();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  checkStatus();
+  fetchConfig();
+});
