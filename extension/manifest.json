@@ -14,7 +14,17 @@
     "*://*.x.com/*",
     "*://x.com/*",
     "*://*.twitter.com/*",
-    "*://twitter.com/*"
+    "*://twitter.com/*",
+    "*://*.reddit.com/*",
+    "*://reddit.com/*",
+    "*://*.youtube.com/*",
+    "*://youtube.com/*",
+    "*://*.facebook.com/*",
+    "*://facebook.com/*",
+    "*://*.instagram.com/*",
+    "*://instagram.com/*",
+    "*://*.tiktok.com/*",
+    "*://tiktok.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -25,7 +35,17 @@
         "*://*.x.com/*",
         "*://x.com/*",
         "*://*.twitter.com/*",
-        "*://twitter.com/*"
+        "*://twitter.com/*",
+        "*://*.reddit.com/*",
+        "*://reddit.com/*",
+        "*://*.youtube.com/*",
+        "*://youtube.com/*",
+        "*://*.facebook.com/*",
+        "*://facebook.com/*",
+        "*://*.instagram.com/*",
+        "*://instagram.com/*",
+        "*://*.tiktok.com/*",
+        "*://tiktok.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"

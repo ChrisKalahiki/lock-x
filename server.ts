@@ -1,6 +1,11 @@
 const PORT = 51736;
 const STALE_TIMEOUT_MS = 60_000; // 60 seconds
 const DEBUG = process.env.DEBUG === "1";
+const CONFIG_FILE = import.meta.dir + "/config.json";
+
+interface Config {
+  blockedSites: string[];
+}
 
 interface InstanceState {
   status: "working" | "idle";
@@ -14,6 +19,17 @@ function log(message: string) {
   if (DEBUG) {
     const timestamp = new Date().toISOString().slice(11, 19);
     console.log(`[${timestamp}] ${message}`);
+  }
+}
+
+function loadConfig(): Config {
+  try {
+    const file = Bun.file(CONFIG_FILE);
+    const text = require("fs").readFileSync(CONFIG_FILE, "utf-8");
+    return JSON.parse(text);
+  } catch (e) {
+    log(`Config load error: ${e}`);
+    return { blockedSites: ["x.com", "twitter.com"] };
   }
 }
 
@@ -90,6 +106,12 @@ const server = Bun.serve({
         override: overrideUntil ? Math.round((overrideUntil - Date.now()) / 1000) : null,
       };
       return new Response(JSON.stringify(response), { headers: corsHeaders });
+    }
+
+    // GET /config - Get blocked sites configuration
+    if (req.method === "GET" && url.pathname === "/config") {
+      const config = loadConfig();
+      return new Response(JSON.stringify(config), { headers: corsHeaders });
     }
 
     // POST /working?instance=ID - Set instance to working

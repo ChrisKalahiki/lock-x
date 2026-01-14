@@ -75,6 +75,34 @@
       margin-bottom: 1.5rem;
       min-height: 1.5rem;
     }
+
+    .break-buttons {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .break-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #e2e8f0;
+      padding: 0.75rem 1.25rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .break-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .break-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -86,8 +114,13 @@
       Get back to work!
     </p>
     <p id="status" class="status"></p>
+    <div class="break-buttons">
+      <button class="break-btn" data-minutes="5">5 min break</button>
+      <button class="break-btn" data-minutes="10">10 min break</button>
+      <button class="break-btn" data-minutes="15">15 min break</button>
+    </div>
     <div class="hint">
-      Need a break? Run: <code>curl -X POST "localhost:51736/override?minutes=5"</code>
+      Or via terminal: <code>curl -X POST "localhost:51736/override?minutes=5"</code>
     </div>
   </div>
   <script>
@@ -108,6 +141,30 @@
     setInterval(checkAndRedirect, 2000);
     // Also check immediately
     checkAndRedirect();
+
+    // Handle break button clicks
+    document.querySelectorAll('.break-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const minutes = e.target.dataset.minutes;
+        document.querySelectorAll('.break-btn').forEach(b => b.disabled = true);
+        statusEl.textContent = `Taking a ${minutes} minute break...`;
+
+        try {
+          const response = await fetch(`http://localhost:51736/override?minutes=${minutes}`, {
+            method: 'POST'
+          });
+          if (response.ok) {
+            statusEl.textContent = 'Break activated! Redirecting...';
+          } else {
+            throw new Error('Server error');
+          }
+        } catch (err) {
+          statusEl.textContent = 'Failed to activate break. Is the server running?';
+          statusEl.style.color = '#ef4444';
+          document.querySelectorAll('.break-btn').forEach(b => b.disabled = false);
+        }
+      });
+    });
   </script>
 </body>
 </html>
