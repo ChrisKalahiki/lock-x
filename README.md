@@ -107,12 +107,14 @@ curl -X POST localhost:51736/clear-override
 
 ### Server Port
 
-The default port is `51736`. To change it:
+The default port is `51736`. To change it, update these files:
 
-1. Edit `server.ts` and change the `PORT` constant
-2. Update the hooks in `~/.claude/settings.json`
-3. Update `STATUS_URL` in `extension/background.js`
-4. Restart the service: `systemctl --user restart lock-x`
+1. `server.ts` - Change the `PORT` constant
+2. `~/.claude/settings.json` - Update the hook URLs
+3. `extension/background.js` - Update `STATUS_URL` and `CONFIG_URL`
+4. `extension/blocked.html` - Update the fetch URL in the break button handler
+
+Then restart the service: `systemctl --user restart lock-x`
 
 ### Debug Mode
 
@@ -126,13 +128,31 @@ systemctl --user stop lock-x
 DEBUG=1 bun run server.ts
 ```
 
-### Blocked Domains
+### Blocked Sites
 
-The extension blocks:
-- x.com, www.x.com, mobile.x.com
-- twitter.com, www.twitter.com, mobile.twitter.com
+By default, the extension blocks these sites (plus www/mobile variants):
+- x.com, twitter.com
+- reddit.com
+- youtube.com
+- facebook.com
+- instagram.com
+- tiktok.com
 
-To modify, edit the `content_scripts.matches` array in `extension/manifest.json`.
+#### Customizing Blocked Sites
+
+Edit `config.json` in the project root to customize which sites are blocked:
+
+```json
+{
+  "blockedSites": [
+    "x.com",
+    "twitter.com",
+    "reddit.com"
+  ]
+}
+```
+
+Changes take effect within 5 minutes (next config check) or immediately after restarting the extension. The extension dynamically generates blocking rules for each site and its www/mobile/m subdomains.
 
 ## How the Hooks Work
 
@@ -233,6 +253,23 @@ systemctl --user restart lock-x
 1. Hard refresh x.com (Ctrl+Shift+R)
 2. Clear browser cache for x.com
 3. Check content script is running (DevTools → Console on x.com)
+
+### Override returns "cooldown" error
+
+The override endpoint has a 60-second cooldown between requests to prevent abuse. Wait and try again, or check remaining cooldown time:
+
+```bash
+curl localhost:51736/status
+# Look for "override" field showing remaining seconds
+```
+
+### "Too many instances" error
+
+The server limits tracking to 100 concurrent Claude Code instances. This error means you've hit the limit. To resolve:
+
+1. Close unused Claude Code windows
+2. Wait 60 seconds for stale instances to be cleaned up
+3. Check current instances: `curl localhost:51736/status`
 
 ## Contributing
 
