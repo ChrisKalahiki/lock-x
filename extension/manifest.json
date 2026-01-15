@@ -25,7 +25,9 @@
     "*://*.instagram.com/*",
     "*://instagram.com/*",
     "*://*.tiktok.com/*",
-    "*://tiktok.com/*"
+    "*://tiktok.com/*",
+    "*://*.discord.com/*",
+    "*://discord.com/*"
   ],
   "web_accessible_resources": [{
     "resources": ["blocked.html", "blocked.js"],
@@ -50,7 +52,9 @@
         "*://*.instagram.com/*",
         "*://instagram.com/*",
         "*://*.tiktok.com/*",
-        "*://tiktok.com/*"
+        "*://tiktok.com/*",
+        "*://*.discord.com/*",
+        "*://discord.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"

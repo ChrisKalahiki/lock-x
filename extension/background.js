@@ -6,7 +6,7 @@ const BLOCK_RULE_ID = 1;
 
 let lastStatus = null;
 let blockingEnabled = false;
-let blockedSites = ["x.com", "twitter.com"]; // Default fallback
+let blockedSites = ["x.com", "twitter.com", "reddit.com", "youtube.com", "facebook.com", "instagram.com", "tiktok.com", "discord.com"]; // Default fallback
 
 // Restore state from storage on startup
 chrome.storage.local.get(["lastStatus", "blockedSites"], (data) => {

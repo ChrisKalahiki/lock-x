@@ -41,7 +41,7 @@ async function loadConfig(): Promise<Config> {
     return config;
   } catch (e) {
     log(`Config load error: ${e}`);
-    return { blockedSites: ["x.com", "twitter.com"] };
+    return { blockedSites: ["x.com", "twitter.com", "reddit.com", "youtube.com", "facebook.com", "instagram.com", "tiktok.com", "discord.com"] };
   }
 }
 
