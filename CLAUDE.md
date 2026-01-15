@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Lock X is a Claude Code plugin that blocks x.com/twitter.com when Claude Code is idle. It consists of three components:
+Lock X is a Claude Code plugin that blocks distracting sites (configurable via `config.json`) when Claude Code is idle. It consists of three components:
 
 1. **Bun Status Server** (`server.ts`) - HTTP server tracking instance states
 2. **Chrome Extension** (`extension/`) - Polls server, blocks sites via content script
@@ -22,6 +22,7 @@ curl localhost:51736/status
 curl -X POST "localhost:51736/working?instance=test"
 curl -X POST "localhost:51736/idle?instance=test"
 curl -X POST "localhost:51736/override?minutes=5"
+curl -X POST localhost:51736/clear-override
 
 # Installation
 ./install.sh               # Full install (hooks, systemd, deps)
@@ -42,6 +43,7 @@ systemctl --user status lock-x
 ## Key Files
 
 - `server.ts` - Main server with all endpoint handlers
+- `config.json` - Blocked sites configuration
 - `extension/background.js` - Service worker with polling and badge updates
 - `extension/content.js` - Content script that redirects blocked pages
 - `extension/manifest.json` - Chrome extension configuration

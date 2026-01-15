@@ -41,7 +41,7 @@ If you have multiple Claude Code sessions open, x.com is blocked if *any* of the
 ### Quick Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/lock-x.git
+git clone https://github.com/ChrisKalahiki/lock-x.git
 cd lock-x
 ./install.sh
 ```
@@ -137,6 +137,7 @@ By default, the extension blocks these sites (plus www/mobile variants):
 - facebook.com
 - instagram.com
 - tiktok.com
+- discord.com
 
 #### Customizing Blocked Sites
 
@@ -207,6 +208,7 @@ rm -rf /path/to/lock-x
 ```
 lock-x/
 ├── server.ts              # Bun HTTP server for status tracking
+├── config.json            # Blocked sites configuration
 ├── package.json           # Bun project configuration
 ├── extension/
 │   ├── manifest.json      # Chrome extension manifest (MV3)
