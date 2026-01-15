@@ -143,6 +143,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const hostname = message.hostname.replace(/^(www\.|m\.|mobile\.)/, "");
     const isBlocked = blockedSites.some(site => hostname === site || hostname.endsWith("." + site));
     sendResponse({ isBlocked });
+  } else if (message.type === "refreshStatus") {
+    // Force immediate status refresh (used after override)
+    checkStatus().then(() => {
+      sendResponse({ ok: true, status: lastStatus });
+    });
+    return true; // Keep channel open for async response
   }
   return true;
 });

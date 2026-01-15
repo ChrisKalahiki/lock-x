@@ -28,7 +28,7 @@
     "*://tiktok.com/*"
   ],
   "web_accessible_resources": [{
-    "resources": ["blocked.html"],
+    "resources": ["blocked.html", "blocked.js"],
     "matches": ["<all_urls>"]
   }],
   "background": {
