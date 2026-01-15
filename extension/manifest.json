@@ -7,7 +7,8 @@
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
     "declarativeNetRequestFeedback",
-    "alarms"
+    "alarms",
+    "storage"
   ],
   "host_permissions": [
     "http://localhost:51736/*",
@@ -26,6 +27,10 @@
     "*://*.tiktok.com/*",
     "*://tiktok.com/*"
   ],
+  "web_accessible_resources": [{
+    "resources": ["blocked.html", "blocked.js"],
+    "matches": ["<all_urls>"]
+  }],
   "background": {
     "service_worker": "background.js"
   },

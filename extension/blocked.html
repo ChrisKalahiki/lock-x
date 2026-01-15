@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="icons/icon48.png" type="image/png">
   <title>Blocked - Get Back to Work!</title>
   <style>
     * {
@@ -123,48 +124,6 @@
       Or via terminal: <code>curl -X POST "localhost:51736/override?minutes=5"</code>
     </div>
   </div>
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const returnUrl = params.get("returnUrl");
-    const statusEl = document.getElementById("status");
-
-    function checkAndRedirect() {
-      chrome.runtime.sendMessage({ type: "checkBlock" }, (response) => {
-        if (response && !response.shouldBlock && returnUrl) {
-          statusEl.textContent = "Unblocked! Redirecting...";
-          window.location.href = decodeURIComponent(returnUrl);
-        }
-      });
-    }
-
-    // Poll every 2 seconds
-    setInterval(checkAndRedirect, 2000);
-    // Also check immediately
-    checkAndRedirect();
-
-    // Handle break button clicks
-    document.querySelectorAll('.break-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        const minutes = e.target.dataset.minutes;
-        document.querySelectorAll('.break-btn').forEach(b => b.disabled = true);
-        statusEl.textContent = `Taking a ${minutes} minute break...`;
-
-        try {
-          const response = await fetch(`http://localhost:51736/override?minutes=${minutes}`, {
-            method: 'POST'
-          });
-          if (response.ok) {
-            statusEl.textContent = 'Break activated! Redirecting...';
-          } else {
-            throw new Error('Server error');
-          }
-        } catch (err) {
-          statusEl.textContent = 'Failed to activate break. Is the server running?';
-          statusEl.style.color = '#ef4444';
-          document.querySelectorAll('.break-btn').forEach(b => b.disabled = false);
-        }
-      });
-    });
-  </script>
+  <script src="blocked.js"></script>
 </body>
 </html>

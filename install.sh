@@ -25,6 +25,22 @@ if ! command -v jq &> /dev/null; then
 fi
 echo "[OK] jq found"
 
+# Check for curl (needed for hooks to communicate with server)
+if ! command -v curl &> /dev/null; then
+    echo "Error: curl is not installed."
+    echo "Install it with: sudo apt install curl"
+    exit 1
+fi
+echo "[OK] curl found"
+
+# Check for systemctl (systemd)
+if ! command -v systemctl &> /dev/null; then
+    echo "Error: systemctl not found (systemd required)."
+    echo "This installer requires a Linux system with systemd."
+    exit 1
+fi
+echo "[OK] systemctl found"
+
 # Install dependencies
 echo ""
 echo "Installing dependencies..."
@@ -99,8 +115,17 @@ echo "Installing systemd service..."
 
 mkdir -p "$SERVICE_DIR"
 
-# Copy service file, replacing %h with actual home directory for compatibility
-sed "s|%h|$HOME|g" "$SCRIPT_DIR/$SERVICE_FILE" > "$SERVICE_DIR/$SERVICE_FILE"
+# Get actual bun path
+BUN_PATH="$(which bun)"
+
+# Copy service file, substituting paths dynamically
+# - %h/code/lock-x -> actual script directory
+# - %h/.bun/bin/bun -> actual bun path
+# - %h -> $HOME (for remaining occurrences like PATH)
+sed -e "s|%h/code/lock-x|$SCRIPT_DIR|g" \
+    -e "s|%h/.bun/bin/bun|$BUN_PATH|g" \
+    -e "s|%h|$HOME|g" \
+    "$SCRIPT_DIR/$SERVICE_FILE" > "$SERVICE_DIR/$SERVICE_FILE"
 
 # Reload systemd and enable service
 systemctl --user daemon-reload
