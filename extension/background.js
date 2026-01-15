@@ -2,10 +2,8 @@ const STATUS_URL = "http://localhost:51736/status";
 const CONFIG_URL = "http://localhost:51736/config";
 const CHECK_INTERVAL_MINUTES = 5 / 60; // 5 seconds in minutes
 const CONFIG_CHECK_INTERVAL_MINUTES = 5; // 5 minutes
-const BLOCK_RULE_ID = 1;
 
 let lastStatus = null;
-let blockingEnabled = false;
 let blockedSites = ["x.com", "twitter.com", "reddit.com", "youtube.com", "facebook.com", "instagram.com", "tiktok.com", "discord.com"]; // Default fallback
 
 // Restore state from storage on startup
@@ -28,24 +26,6 @@ const BADGE_COLORS = {
   error: "#6b7280", // Gray - server down
 };
 
-// Generate block rules from site list
-function generateBlockRules(sites) {
-  const domains = [];
-  sites.forEach(site => {
-    domains.push(site, `www.${site}`, `mobile.${site}`, `m.${site}`);
-  });
-
-  return [{
-    id: BLOCK_RULE_ID,
-    priority: 1,
-    action: { type: "block" },
-    condition: {
-      requestDomains: domains,
-      resourceTypes: ["main_frame"],
-    },
-  }];
-}
-
 async function updateBadge(status, text) {
   await chrome.action.setBadgeBackgroundColor({ color: BADGE_COLORS[status] });
   await chrome.action.setBadgeText({ text });
@@ -58,20 +38,6 @@ async function updateBadge(status, text) {
   await chrome.action.setTitle({ title: titles[status] });
 }
 
-async function setBlockingEnabled(enabled) {
-  try {
-    const rules = enabled ? generateBlockRules(blockedSites) : [];
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: [BLOCK_RULE_ID],
-      addRules: rules,
-    });
-    console.log(`Lock X: Blocking ${enabled ? "enabled" : "disabled"}`);
-    blockingEnabled = enabled;
-  } catch (e) {
-    console.error("Lock X: Failed to update rules:", e);
-  }
-}
-
 async function fetchConfig() {
   try {
     const response = await fetch(CONFIG_URL);
@@ -80,11 +46,6 @@ async function fetchConfig() {
       blockedSites = config.blockedSites;
       saveState();
       console.log("Lock X: Config loaded, blocking:", blockedSites);
-
-      // If currently blocking, update rules with new config
-      if (blockingEnabled) {
-        await setBlockingEnabled(true);
-      }
     }
   } catch (e) {
     console.log("Lock X: Could not fetch config, using defaults");
@@ -96,16 +57,13 @@ async function checkStatus() {
     const response = await fetch(STATUS_URL);
     const data = await response.json();
 
-    const shouldBlock = data.status === "idle";
-
     // Only update if status changed
     if (lastStatus !== data.status) {
       console.log(`Lock X: Status changed from ${lastStatus} to ${data.status}`);
       lastStatus = data.status;
       saveState();
-      await setBlockingEnabled(shouldBlock);
 
-      if (shouldBlock) {
+      if (data.status === "idle") {
         await updateBadge("idle", "!");
       } else {
         await updateBadge("working", "");
@@ -117,7 +75,6 @@ async function checkStatus() {
       console.log("Lock X: Server unreachable, disabling blocking");
       lastStatus = "error";
       saveState();
-      await setBlockingEnabled(false);
       await updateBadge("error", "?");
     }
   }
@@ -153,9 +110,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Initial checks on service worker startup
-checkStatus();
-fetchConfig();
+// Clear any stale declarativeNetRequest rules and do initial checks
+(async () => {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [1]
+    });
+  } catch (e) {
+    // Ignore - permission may have been removed
+  }
+  checkStatus();
+  fetchConfig();
+})();
 
 // Also check when the service worker wakes up
 chrome.runtime.onStartup.addListener(() => {

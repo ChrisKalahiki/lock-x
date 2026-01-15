@@ -4,9 +4,6 @@
   "version": "1.0.0",
   "description": "Blocks x.com when Claude Code is idle - stay productive!",
   "permissions": [
-    "declarativeNetRequest",
-    "declarativeNetRequestWithHostAccess",
-    "declarativeNetRequestFeedback",
     "alarms",
     "storage"
   ],

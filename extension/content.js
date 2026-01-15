@@ -16,8 +16,9 @@ async function checkAndBlock() {
     // First check if blocking is enabled
     const blockResponse = await sendMessageWithTimeout({ type: "checkBlock" });
 
-    if (!blockResponse || blockResponse.error || !blockResponse.shouldBlock) {
-      return; // Not blocking right now (or timeout)
+    // Block by default - only allow if explicit shouldBlock: false
+    if (blockResponse && !blockResponse.error && blockResponse.shouldBlock === false) {
+      return; // Explicitly not blocking
     }
 
     // Check if this specific site is in the blocked list
@@ -26,12 +27,16 @@ async function checkAndBlock() {
       hostname: window.location.hostname
     });
 
-    if (siteResponse && !siteResponse.error && siteResponse.isBlocked) {
+    // Block if site is in list OR if we couldn't get a response (fail-closed)
+    if (!siteResponse || siteResponse.error || siteResponse.isBlocked) {
       const returnUrl = encodeURIComponent(window.location.href);
       window.location.href = chrome.runtime.getURL(`blocked.html?returnUrl=${returnUrl}`);
     }
   } catch (e) {
-    console.error("Lock X: Error checking block status", e);
+    // On error, block by default (fail-closed)
+    console.error("Lock X: Error checking block status, blocking by default", e);
+    const returnUrl = encodeURIComponent(window.location.href);
+    window.location.href = chrome.runtime.getURL(`blocked.html?returnUrl=${returnUrl}`);
   }
 }
 
