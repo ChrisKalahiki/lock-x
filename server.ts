@@ -1,25 +1,48 @@
 const PORT = 51736;
 const STALE_TIMEOUT_MS = 60_000; // 60 seconds
+const CLEANUP_INTERVAL_MS = 30_000; // 30 seconds
 const DEBUG = process.env.DEBUG === "1";
 const CONFIG_FILE = import.meta.dir + "/config.json";
+const MAX_INSTANCES = 100;
+const MIN_OVERRIDE_MINUTES = 1;
+const MAX_OVERRIDE_MINUTES = 60;
+const OVERRIDE_COOLDOWN_MS = 60_000; // 1 minute between overrides
+const INSTANCE_ID_MAX_LENGTH = 64;
+const INSTANCE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const DEFAULT_BLOCKED_SITES = [
+  "x.com",
+  "twitter.com",
+  "reddit.com",
+  "youtube.com",
+  "facebook.com",
+  "instagram.com",
+  "tiktok.com",
+  "discord.com",
+];
+const APP_VERSION = process.env.npm_package_version || "1.0.0";
 
-interface Config {
+export interface Config {
   blockedSites: string[];
 }
 
-interface InstanceState {
+export interface InstanceState {
   status: "working" | "idle";
   lastUpdate: number;
 }
 
-const instances = new Map<string, InstanceState>();
-let overrideUntil: number | null = null;
-let lastOverrideTime = 0;
-const OVERRIDE_COOLDOWN_MS = 60_000; // 1 minute between overrides
-const CLEANUP_INTERVAL_MS = 30_000; // 30 seconds
-const MAX_INSTANCES = 100;
-const MIN_OVERRIDE_MINUTES = 1;
-const MAX_OVERRIDE_MINUTES = 60;
+export interface LockXState {
+  instances: Map<string, InstanceState>;
+  overrideUntil: number | null;
+  lastOverrideTime: number;
+  startedAt: number;
+}
+
+export const state: LockXState = {
+  instances: new Map<string, InstanceState>(),
+  overrideUntil: null,
+  lastOverrideTime: 0,
+  startedAt: Date.now(),
+};
 
 function log(message: string) {
   if (DEBUG) {
@@ -28,47 +51,62 @@ function log(message: string) {
   }
 }
 
-async function loadConfig(): Promise<Config> {
+function json(request: Request, body: unknown, status = 200): Response {
+  const headers = getCorsHeaders(request);
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
+function errorJson(
+  request: Request,
+  status: number,
+  code: string,
+  error: string,
+  extra: Record<string, unknown> = {}
+): Response {
+  return json(request, { error, code, ...extra }, status);
+}
+
+export async function loadConfig(): Promise<Config> {
   try {
     const text = await Bun.file(CONFIG_FILE).text();
     const config = JSON.parse(text);
+
     if (!Array.isArray(config.blockedSites)) {
       throw new Error("blockedSites must be an array");
     }
+
     if (!config.blockedSites.every((s: unknown) => typeof s === "string")) {
       throw new Error("blockedSites must contain only strings");
     }
+
     return config;
   } catch (e) {
     log(`Config load error: ${e}`);
-    return { blockedSites: ["x.com", "twitter.com", "reddit.com", "youtube.com", "facebook.com", "instagram.com", "tiktok.com", "discord.com"] };
+    return { blockedSites: DEFAULT_BLOCKED_SITES };
   }
 }
 
-function cleanupStaleInstances() {
+export function cleanupStaleInstances(currentState: LockXState = state): void {
   const now = Date.now();
-  for (const [id, state] of instances) {
-    if (now - state.lastUpdate > STALE_TIMEOUT_MS) {
+  for (const [id, instanceState] of currentState.instances) {
+    if (now - instanceState.lastUpdate > STALE_TIMEOUT_MS) {
       log(`Removing stale instance: ${id}`);
-      instances.delete(id);
+      currentState.instances.delete(id);
     }
   }
 }
 
-function getAggregatedStatus(): "working" | "idle" {
-  // Check override first
-  if (overrideUntil && Date.now() < overrideUntil) {
+export function getAggregatedStatus(currentState: LockXState = state): "working" | "idle" {
+  if (currentState.overrideUntil && Date.now() < currentState.overrideUntil) {
     return "working";
   }
 
-  // No instances = Claude Code not running = allow
-  if (instances.size === 0) {
+  if (currentState.instances.size === 0) {
     return "working";
   }
 
-  // Block if ANY instance is idle
-  for (const state of instances.values()) {
-    if (state.status === "idle") {
+  for (const instanceState of currentState.instances.values()) {
+    if (instanceState.status === "idle") {
       return "idle";
     }
   }
@@ -76,22 +114,70 @@ function getAggregatedStatus(): "working" | "idle" {
   return "working";
 }
 
-function getInstancesSnapshot(): Record<string, { status: string; age: number }> {
+export function getInstancesSnapshot(
+  currentState: LockXState = state
+): Record<string, { status: string; age: number }> {
   const now = Date.now();
   const snapshot: Record<string, { status: string; age: number }> = {};
-  for (const [id, state] of instances) {
+
+  for (const [id, instanceState] of currentState.instances) {
     snapshot[id] = {
-      status: state.status,
-      age: Math.round((now - state.lastUpdate) / 1000),
+      status: instanceState.status,
+      age: Math.round((now - instanceState.lastUpdate) / 1000),
     };
   }
+
   return snapshot;
 }
 
-function getCorsHeaders(request: Request): Record<string, string> {
+function parseInstanceId(raw: string | null):
+  | { ok: true; value: string }
+  | { ok: false; code: string; error: string } {
+  const instanceId = raw || "default";
+
+  if (instanceId.length > INSTANCE_ID_MAX_LENGTH) {
+    return {
+      ok: false,
+      code: "INVALID_INSTANCE",
+      error: `Instance ID too long (max ${INSTANCE_ID_MAX_LENGTH} chars)`,
+    };
+  }
+
+  if (!INSTANCE_ID_PATTERN.test(instanceId)) {
+    return {
+      ok: false,
+      code: "INVALID_INSTANCE",
+      error: "Instance ID must match [a-zA-Z0-9_-]",
+    };
+  }
+
+  return { ok: true, value: instanceId };
+}
+
+function parseOverrideMinutes(raw: string | null):
+  | { ok: true; value: number; clamped: boolean }
+  | { ok: false; code: string; error: string } {
+  const minutesParam = raw || "5";
+  const parsed = parseInt(minutesParam, 10);
+
+  if (Number.isNaN(parsed)) {
+    return {
+      ok: false,
+      code: "INVALID_MINUTES",
+      error: "Invalid minutes parameter",
+    };
+  }
+
+  const clamped = parsed < MIN_OVERRIDE_MINUTES || parsed > MAX_OVERRIDE_MINUTES;
+  const value = Math.max(MIN_OVERRIDE_MINUTES, Math.min(MAX_OVERRIDE_MINUTES, parsed));
+  return { ok: true, value, clamped };
+}
+
+export function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("origin") || "";
   const allowedPrefixes = ["http://localhost", "chrome-extension://"];
   const corsOrigin = allowedPrefixes.some((p) => origin.startsWith(p)) ? origin : "";
+
   return {
     "Access-Control-Allow-Origin": corsOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -100,134 +186,118 @@ function getCorsHeaders(request: Request): Record<string, string> {
   };
 }
 
-const server = Bun.serve({
-  port: PORT,
-  async fetch(req) {
-    const url = new URL(req.url);
-    const headers = getCorsHeaders(req);
+export async function handleRequest(req: Request, currentState: LockXState = state): Promise<Response> {
+  const url = new URL(req.url);
 
-    // Handle CORS preflight
-    if (req.method === "OPTIONS") {
-      return new Response(null, { headers });
-    }
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: getCorsHeaders(req) });
+  }
 
-    // GET /status - Get current aggregated status
-    if (req.method === "GET" && url.pathname === "/status") {
-      const status = getAggregatedStatus();
-      const response = {
-        status,
-        instances: getInstancesSnapshot(),
-        override: overrideUntil ? Math.round((overrideUntil - Date.now()) / 1000) : null,
-      };
-      return new Response(JSON.stringify(response), { headers });
-    }
-
-    // GET /config - Get blocked sites configuration
-    if (req.method === "GET" && url.pathname === "/config") {
-      const config = await loadConfig();
-      return new Response(JSON.stringify(config), { headers });
-    }
-
-    // POST /working?instance=ID - Set instance to working
-    if (req.method === "POST" && url.pathname === "/working") {
-      const instanceId = url.searchParams.get("instance") || "default";
-      // Check instance limit for new instances
-      if (!instances.has(instanceId) && instances.size >= MAX_INSTANCES) {
-        return new Response(
-          JSON.stringify({ error: "Too many instances" }),
-          { status: 429, headers }
-        );
-      }
-      const previous = instances.get(instanceId)?.status;
-      instances.set(instanceId, { status: "working", lastUpdate: Date.now() });
-      if (previous !== "working") {
-        log(`${instanceId}: ${previous ?? "new"} → working`);
-      }
-      return new Response(JSON.stringify({ ok: true, instance: instanceId, status: "working" }), {
-        headers,
-      });
-    }
-
-    // POST /idle?instance=ID - Set instance to idle
-    if (req.method === "POST" && url.pathname === "/idle") {
-      const instanceId = url.searchParams.get("instance") || "default";
-      // Check instance limit for new instances
-      if (!instances.has(instanceId) && instances.size >= MAX_INSTANCES) {
-        return new Response(
-          JSON.stringify({ error: "Too many instances" }),
-          { status: 429, headers }
-        );
-      }
-      const previous = instances.get(instanceId)?.status;
-      instances.set(instanceId, { status: "idle", lastUpdate: Date.now() });
-      if (previous !== "idle") {
-        log(`${instanceId}: ${previous ?? "new"} → idle`);
-      }
-      return new Response(JSON.stringify({ ok: true, instance: instanceId, status: "idle" }), {
-        headers,
-      });
-    }
-
-    // POST /override?minutes=N - Temporarily force working status
-    if (req.method === "POST" && url.pathname === "/override") {
-      // Rate limiting: prevent spam
-      if (Date.now() - lastOverrideTime < OVERRIDE_COOLDOWN_MS) {
-        const remainingSecs = Math.ceil((OVERRIDE_COOLDOWN_MS - (Date.now() - lastOverrideTime)) / 1000);
-        return new Response(
-          JSON.stringify({ error: "Override cooldown active", retryAfterSeconds: remainingSecs }),
-          { status: 429, headers }
-        );
-      }
-
-      // Validate minutes parameter
-      const minutesParam = url.searchParams.get("minutes") || "5";
-      const minutes = parseInt(minutesParam, 10);
-      if (isNaN(minutes)) {
-        return new Response(
-          JSON.stringify({ error: "Invalid minutes parameter" }),
-          { status: 400, headers }
-        );
-      }
-
-      const clampedMinutes = Math.max(MIN_OVERRIDE_MINUTES, Math.min(MAX_OVERRIDE_MINUTES, minutes));
-      overrideUntil = Date.now() + clampedMinutes * 60 * 1000;
-      lastOverrideTime = Date.now();
-      log(`Override activated for ${clampedMinutes} minutes`);
-      return new Response(
-        JSON.stringify({ ok: true, override: true, minutes: clampedMinutes, until: overrideUntil }),
-        { headers }
-      );
-    }
-
-    // POST /clear-override - Clear the override
-    if (req.method === "POST" && url.pathname === "/clear-override") {
-      overrideUntil = null;
-      log("Override cleared");
-      return new Response(JSON.stringify({ ok: true, override: false }), { headers });
-    }
-
-    // 404 for unknown routes
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers,
+  if (req.method === "GET" && url.pathname === "/health") {
+    return json(req, {
+      ok: true,
+      version: APP_VERSION,
+      uptimeSec: Math.floor((Date.now() - currentState.startedAt) / 1000),
     });
-  },
-});
+  }
 
-console.log(`Lock X server running on http://localhost:${server.port}`);
-if (DEBUG) {
-  console.log("Debug mode enabled - state changes will be logged");
+  if (req.method === "GET" && url.pathname === "/status") {
+    return json(req, {
+      status: getAggregatedStatus(currentState),
+      instances: getInstancesSnapshot(currentState),
+      override: currentState.overrideUntil
+        ? Math.max(0, Math.round((currentState.overrideUntil - Date.now()) / 1000))
+        : null,
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/config") {
+    const config = await loadConfig();
+    return json(req, config);
+  }
+
+  if (req.method === "POST" && (url.pathname === "/working" || url.pathname === "/idle")) {
+    const parsedInstance = parseInstanceId(url.searchParams.get("instance"));
+    if (!parsedInstance.ok) {
+      return errorJson(req, 400, parsedInstance.code, parsedInstance.error);
+    }
+
+    if (!currentState.instances.has(parsedInstance.value) && currentState.instances.size >= MAX_INSTANCES) {
+      return errorJson(req, 429, "TOO_MANY_INSTANCES", "Too many instances", {
+        maxInstances: MAX_INSTANCES,
+      });
+    }
+
+    const nextStatus: "working" | "idle" = url.pathname === "/working" ? "working" : "idle";
+    const previous = currentState.instances.get(parsedInstance.value)?.status;
+    currentState.instances.set(parsedInstance.value, { status: nextStatus, lastUpdate: Date.now() });
+
+    if (previous !== nextStatus) {
+      log(`${parsedInstance.value}: ${previous ?? "new"} → ${nextStatus}`);
+    }
+
+    return json(req, {
+      ok: true,
+      instance: parsedInstance.value,
+      status: nextStatus,
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/override") {
+    const now = Date.now();
+    if (now - currentState.lastOverrideTime < OVERRIDE_COOLDOWN_MS) {
+      const remainingSecs = Math.ceil((OVERRIDE_COOLDOWN_MS - (now - currentState.lastOverrideTime)) / 1000);
+      return errorJson(req, 429, "OVERRIDE_COOLDOWN", "Override cooldown active", {
+        retryAfterSeconds: remainingSecs,
+      });
+    }
+
+    const parsedMinutes = parseOverrideMinutes(url.searchParams.get("minutes"));
+    if (!parsedMinutes.ok) {
+      return errorJson(req, 400, parsedMinutes.code, parsedMinutes.error);
+    }
+
+    currentState.overrideUntil = now + parsedMinutes.value * 60 * 1000;
+    currentState.lastOverrideTime = now;
+    log(`Override activated for ${parsedMinutes.value} minutes`);
+
+    return json(req, {
+      ok: true,
+      override: true,
+      minutes: parsedMinutes.value,
+      until: currentState.overrideUntil,
+      clamped: parsedMinutes.clamped,
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/clear-override") {
+    currentState.overrideUntil = null;
+    log("Override cleared");
+    return json(req, { ok: true, override: false });
+  }
+
+  return errorJson(req, 404, "NOT_FOUND", "Not found");
 }
 
-// Periodic cleanup of stale instances
-setInterval(cleanupStaleInstances, CLEANUP_INTERVAL_MS);
+if (import.meta.main) {
+  const server = Bun.serve({
+    port: PORT,
+    fetch: (req) => handleRequest(req, state),
+  });
 
-// Graceful shutdown
-function shutdown(signal: string) {
-  console.log(`Received ${signal}, shutting down...`);
-  server.stop();
-  process.exit(0);
+  console.log(`Lock X server running on http://localhost:${server.port}`);
+  if (DEBUG) {
+    console.log("Debug mode enabled - state changes will be logged");
+  }
+
+  setInterval(() => cleanupStaleInstances(state), CLEANUP_INTERVAL_MS);
+
+  function shutdown(signal: string) {
+    console.log(`Received ${signal}, shutting down...`);
+    server.stop();
+    process.exit(0);
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
-
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,6 +1,6 @@
 [Unit]
-Description=Lock X Status Server
-Documentation=https://github.com/user/lock-x
+Description=Lock X local status server
+Documentation=https://github.com/ChrisKalahiki/lock-x
 After=network.target
 
 [Service]

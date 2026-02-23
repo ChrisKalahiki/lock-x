@@ -1,44 +1,40 @@
 # Lock X
 
-A Claude Code plugin that blocks x.com (Twitter) when Claude Code is open but idle. Stay productive!
+A local productivity tool that blocks distracting sites while Claude Code is idle.
 
-## How It Works
+## What It Does
 
-When you have Claude Code open but it's waiting for your input (idle), you should be thinking about your code—not scrolling Twitter. Lock X enforces this by blocking x.com until Claude is actively working again.
+Lock X combines Claude Code hooks, a local Bun server, and a Chrome extension:
 
-```
-┌─────────────────┐     hooks (curl)    ┌──────────────────┐
-│ Claude Code (1) │ ──────────────────> │  Bun Status      │
-├─────────────────┤   /working, /idle   │  Server (:51736) │
-│ Claude Code (2) │ ────────────────────│  (multi-instance)│
-└─────────────────┘                     └────────┬─────────┘
-                                                 │ polls /status
-                                        ┌────────▼─────────┐
-                                        │ Chrome Extension │
-                                        │ (content script) │
-                                        └──────────────────┘
-```
+- Claude Code hooks report per-instance status (`working`/`idle`) to the local server.
+- The server computes aggregate state across instances.
+- The extension polls that state and blocks configured sites when appropriate.
 
-### State Logic
+Blocking rule:
 
-| Claude Code State | x.com |
-|-------------------|-------|
-| Not running | ✅ Allowed |
-| All instances working | ✅ Allowed |
-| **Any instance idle** | 🔒 **Blocked** |
+- If any Claude instance is idle, configured distracting sites are blocked.
+- If all tracked instances are working (or none are running), sites are allowed.
+- Temporary override can force `working` for a short break.
 
-If you have multiple Claude Code sessions open, x.com is blocked if *any* of them are idle.
+## Supported Platforms
 
-## Prerequisites
+- Linux with systemd user services
+- Chrome/Chromium (Manifest V3 extension)
 
-- [Bun](https://bun.sh/) - `curl -fsSL https://bun.sh/install | bash`
-- [jq](https://stedolan.github.io/jq/) - `sudo apt install jq` (Debian/Ubuntu) or `brew install jq` (macOS)
-- Google Chrome or Chromium
-- Linux with systemd (for auto-start)
+Not currently supported:
+
+- macOS launchd setup
+- Windows services
+- Firefox extension packaging
+
+## Privacy And Security
+
+- Local-only by design. No telemetry or external analytics.
+- Server listens on `localhost` only.
+- Extension uses strict fail-closed behavior on configured blocked domains when status is uncertain.
+- State is kept in-memory on the server; extension stores last known status and blocked site list in local browser storage.
 
 ## Installation
-
-### Quick Install
 
 ```bash
 git clone https://github.com/ChrisKalahiki/lock-x.git
@@ -46,102 +42,42 @@ cd lock-x
 ./install.sh
 ```
 
-The install script will:
-1. Install Bun dependencies
-2. Configure Claude Code hooks (merges with existing hooks)
-3. Install and start the systemd user service
-4. Print instructions for loading the Chrome extension
+Installer actions:
 
-### Manual Chrome Extension Setup
+1. Installs Bun dependencies
+2. Merges Claude hooks into `~/.claude/settings.json` (idempotent)
+3. Installs/restarts `lock-x.service` in user systemd
+4. Prints extension setup and verification commands
 
-After running the install script:
+### Load Extension
 
-1. Open Chrome and navigate to `chrome://extensions/`
-2. Enable **Developer mode** (toggle in top right)
+1. Open `chrome://extensions/`
+2. Enable Developer mode
 3. Click **Load unpacked**
-4. Select the `extension` folder from this repository
+4. Select `extension/`
 
-### Verify Installation
+## API Endpoints
 
-```bash
-# Check server is running
-curl localhost:51736/status
+- `GET /health` -> service metadata
+- `GET /status` -> aggregate status and instance snapshot
+- `GET /config` -> blocked sites
+- `POST /working?instance=ID` -> mark instance working
+- `POST /idle?instance=ID` -> mark instance idle
+- `POST /override?minutes=N` -> temporary break override
+- `POST /clear-override` -> clear override
 
-# Check systemd service
-systemctl --user status lock-x
-```
-
-## Usage
-
-Once installed, Lock X runs automatically in the background.
-
-### Extension Badge
-
-The extension icon shows the current status:
-
-| Badge | Meaning |
-|-------|---------|
-| 🟢 (empty) | Working - x.com allowed |
-| 🔴 `!` | Idle - x.com blocked |
-| ⚫ `?` | Server offline - x.com allowed |
-
-### Escape Hatch
-
-Need a quick break? Temporarily allow x.com:
+### Example
 
 ```bash
-# Allow x.com for 5 minutes
-curl -X POST "localhost:51736/override?minutes=5"
-
-# Allow for custom duration (1-60 minutes)
-curl -X POST "localhost:51736/override?minutes=15"
-
-# Check current status and override time remaining
-curl localhost:51736/status
-
-# Clear override early
-curl -X POST localhost:51736/clear-override
+curl -s localhost:51736/health
+curl -s localhost:51736/status
+curl -X POST "localhost:51736/working?instance=$PPID"
+curl -X POST "localhost:51736/override?minutes=10"
 ```
 
 ## Configuration
 
-### Server Port
-
-The default port is `51736`. To change it, update these files:
-
-1. `server.ts` - Change the `PORT` constant
-2. `~/.claude/settings.json` - Update the hook URLs
-3. `extension/background.js` - Update `STATUS_URL` and `CONFIG_URL`
-4. `extension/blocked.html` - Update the fetch URL in the break button handler
-
-Then restart the service: `systemctl --user restart lock-x`
-
-### Debug Mode
-
-Run the server with logging to see state changes:
-
-```bash
-# Stop the service
-systemctl --user stop lock-x
-
-# Run manually with debug output
-DEBUG=1 bun run server.ts
-```
-
-### Blocked Sites
-
-By default, the extension blocks these sites (plus www/mobile variants):
-- x.com, twitter.com
-- reddit.com
-- youtube.com
-- facebook.com
-- instagram.com
-- tiktok.com
-- discord.com
-
-#### Customizing Blocked Sites
-
-Edit `config.json` in the project root to customize which sites are blocked:
+Edit `config.json`:
 
 ```json
 {
@@ -153,129 +89,37 @@ Edit `config.json` in the project root to customize which sites are blocked:
 }
 ```
 
-Changes take effect within 5 minutes (next config check) or immediately after restarting the extension. The extension dynamically generates blocking rules for each site and its www/mobile/m subdomains.
+Site matching includes root and subdomains (`www`, `m`, `mobile`, etc.).
 
-## How the Hooks Work
-
-Lock X uses Claude Code's hook system to track activity:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "command": "curl -s -X POST \"http://localhost:51736/working?instance=$PPID\""
-      }]
-    }],
-    "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "curl -s -X POST \"http://localhost:51736/idle?instance=$PPID\""
-      }]
-    }]
-  }
-}
-```
-
-- **PreToolUse**: Fires before Claude uses any tool → marks instance as "working"
-- **Stop**: Fires when Claude finishes responding → marks instance as "idle"
-
-Each Claude Code session is identified by its parent process ID (`$PPID`), allowing multi-instance tracking.
-
-## Uninstallation
+## Dev Commands
 
 ```bash
-# Stop and disable the service
-systemctl --user stop lock-x
-systemctl --user disable lock-x
-rm ~/.config/systemd/user/lock-x.service
-systemctl --user daemon-reload
-
-# Remove hooks from Claude settings
-# Edit ~/.claude/settings.json and remove the PreToolUse and Stop hooks
-
-# Remove the Chrome extension
-# Go to chrome://extensions/ and remove "Lock X"
-
-# Remove the project folder
-rm -rf /path/to/lock-x
+bun run dev     # debug server logs
+bun run start   # normal server
+bun test        # run test suite
 ```
 
-## Project Structure
+## Troubleshooting Matrix
 
-```
-lock-x/
-├── server.ts              # Bun HTTP server for status tracking
-├── config.json            # Blocked sites configuration
-├── package.json           # Bun project configuration
-├── extension/
-│   ├── manifest.json      # Chrome extension manifest (MV3)
-│   ├── background.js      # Service worker for polling & badge
-│   ├── content.js         # Content script for blocking
-│   ├── blocked.html       # "Get back to work!" page
-│   └── icons/             # Extension icons
-├── lock-x.service         # systemd user service file
-├── install.sh             # Installation script
-├── CLAUDE.md              # Claude Code assistant guidance
-└── README.md              # This file
-```
+| Symptom | Check | Fix |
+|---|---|---|
+| Extension shows `?` badge | `curl -s localhost:51736/health` | Restart service: `systemctl --user restart lock-x` |
+| Sites not blocking when expected | `curl -s localhost:51736/status` | Confirm at least one instance is `idle`; restart extension |
+| Override fails | `curl -s localhost:51736/status` | Wait for cooldown (`retryAfterSeconds`) then retry |
+| Hooks not updating status | inspect `~/.claude/settings.json` | Re-run `./install.sh` and restart Claude Code |
+| Service fails on boot | `systemctl --user status lock-x` | Check Bun path and service environment |
 
-## Troubleshooting
-
-### Server not running
+## Uninstall
 
 ```bash
-# Check service status
-systemctl --user status lock-x
-
-# View logs
-journalctl --user -u lock-x -f
-
-# Restart service
-systemctl --user restart lock-x
+./uninstall.sh
 ```
 
-### Hooks not firing
-
-1. Verify hooks are in `~/.claude/settings.json`
-2. Restart Claude Code after modifying settings
-3. Check server logs: `DEBUG=1 bun run server.ts`
-
-### Extension not blocking
-
-1. Check badge color (should be red when idle)
-2. Verify status is "idle": `curl localhost:51736/status`
-3. Check extension console at `chrome://extensions/` → Lock X → "service worker"
-4. Try removing and re-adding the extension
-
-### x.com still accessible when badge is red
-
-1. Hard refresh x.com (Ctrl+Shift+R)
-2. Clear browser cache for x.com
-3. Check content script is running (DevTools → Console on x.com)
-
-### Override returns "cooldown" error
-
-The override endpoint has a 60-second cooldown between requests to prevent abuse. Wait and try again, or check remaining cooldown time:
-
-```bash
-curl localhost:51736/status
-# Look for "override" field showing remaining seconds
-```
-
-### "Too many instances" error
-
-The server limits tracking to 100 concurrent Claude Code instances. This error means you've hit the limit. To resolve:
-
-1. Close unused Claude Code windows
-2. Wait 60 seconds for stale instances to be cleaned up
-3. Check current instances: `curl localhost:51736/status`
+Then remove the extension from `chrome://extensions/`.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+See `CONTRIBUTING.md`.
 
 ## License
 
